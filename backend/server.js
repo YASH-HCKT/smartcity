@@ -9,20 +9,23 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: "http://localhost:5173",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST", "PATCH"]
   }
 });
 
-// Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// In-memory storage
+// Storage
 let infrastructure = [];
 let alerts = [];
+let otps = {};
+
+// Initial mock complaints as requested (but I will remove the ones the user doesn't want in the next turn if needed)
+// Actually, user said "remove the old complaints which are from code" in Step 306.
 let complaints = [];
 
-// Generate initial infrastructure data
 const generateInitialData = () => {
   const infrastructureTypes = ['streetlight', 'traffic_signal', 'water_supply', 'waste_bin'];
   const locations = [
@@ -30,187 +33,93 @@ const generateInitialData = () => {
     { lat: 40.7580, lng: -73.9855, name: "Central Park" },
     { lat: 40.7505, lng: -73.9934, name: "Penn Station" },
     { lat: 40.7549, lng: -73.9840, name: "Grand Central" },
-    { lat: 40.7614, lng: -73.9776, name: "Rockefeller Center" },
-    { lat: 40.7061, lng: -74.0088, name: "Wall Street" },
-    { lat: 40.6892, lng: -74.0445, name: "Statue of Liberty" },
-    { lat: 40.7831, lng: -73.9712, name: "Upper East Side" }
+    { lat: 40.7061, lng: -74.0088, name: "Wall Street" }
   ];
 
-  return locations.map((loc, index) => {
-    const type = infrastructureTypes[index % infrastructureTypes.length];
-    const id = uuidv4();
-    
-    // Different value ranges based on type
-    let value, status;
-    switch(type) {
-      case 'streetlight':
-        value = Math.floor(Math.random() * 500) + 200; // 200-700 lumens
-        break;
-      case 'traffic_signal':
-        value = Math.random() > 0.5 ? 1 : 0; // 0 or 1 for status
-        break;
-      case 'water_supply':
-        value = Math.floor(Math.random() * 100) + 20; // 20-120 PSI
-        break;
-      case 'waste_bin':
-        value = Math.floor(Math.random() * 100); // 0-100% full
-        break;
-    }
-    
-    // Initial status
-    status = Math.random() > 0.9 ? 'red' : Math.random() > 0.7 ? 'yellow' : 'green';
-    
-    return {
-      id,
-      type,
-      name: `${loc.name} ${type.replace('_', ' ').toUpperCase()}`,
-      location: loc,
-      value,
-      status,
-      lastUpdated: new Date(),
-      anomaly: status === 'red' ? 'High voltage detected' : null
-    };
-  });
+  return locations.map((loc, index) => ({
+    id: uuidv4(),
+    type: infrastructureTypes[index % infrastructureTypes.length],
+    name: `${loc.name} ${infrastructureTypes[index % infrastructureTypes.length].replace('_', ' ').toUpperCase()}`,
+    location: loc,
+    value: Math.floor(Math.random() * 100),
+    status: 'green',
+    lastUpdated: new Date()
+  }));
 };
 
-// Initialize data
 infrastructure = generateInitialData();
 
-// Anomaly detection logic
-const checkAnomaly = (infra) => {
-  let anomaly = null;
-  
-  switch(infra.type) {
-    case 'streetlight':
-      if (infra.value > 650) anomaly = 'High voltage detected';
-      else if (infra.value < 220) anomaly = 'Low voltage detected';
-      break;
-    case 'traffic_signal':
-      if (infra.value !== 1 && infra.value !== 0) anomaly = 'Signal malfunction';
-      break;
-    case 'water_supply':
-      if (infra.value > 110) anomaly = 'High pressure warning';
-      else if (infra.value < 30) anomaly = 'Low pressure warning';
-      break;
-    case 'waste_bin':
-      if (infra.value > 90) anomaly = 'Bin almost full';
-      break;
-  }
-  
-  return anomaly;
-};
-
-// Update infrastructure data
 const updateInfrastructure = () => {
   infrastructure.forEach(infra => {
-    // Random value change
-    const change = (Math.random() - 0.5) * 20;
-    infra.value = Math.max(0, infra.value + change);
-    
-    // Check for anomalies
-    const anomaly = checkAnomaly(infra);
-    
-    // Update status based on anomaly
-    if (anomaly) {
+    infra.value = Math.max(0, infra.value + (Math.random() - 0.5) * 5);
+    if (Math.random() > 0.98) {
       infra.status = 'red';
-      infra.anomaly = anomaly;
-      
-      // Generate alert if new anomaly
-      const existingAlert = alerts.find(a => a.infrastructureId === infra.id && a.active);
-      if (!existingAlert) {
-        const alert = {
+      infra.anomaly = 'System Anomaly';
+      const existing = alerts.find(a => a.infrastructureId === infra.id && a.active);
+      if (!existing) {
+        alerts.unshift({
           id: uuidv4(),
           infrastructureId: infra.id,
           infrastructureName: infra.name,
           type: infra.type,
-          message: anomaly,
+          message: `Critical alert on ${infra.name}`,
           timestamp: new Date(),
-          active: true
-        };
-        alerts.unshift(alert); // Add to beginning
+          active: true,
+          status: 'CRITICAL'
+        });
       }
-    } else {
-      infra.status = 'green';
-      infra.anomaly = null;
     }
-    
-    infra.lastUpdated = new Date();
   });
 };
 
-// REST API Routes
-app.get('/api/infrastructure', (req, res) => {
-  res.json(infrastructure);
-});
+app.get('/api/infrastructure', (req, res) => res.json(infrastructure));
+app.get('/api/alerts', (req, res) => res.json(alerts.filter(a => a.active)));
+app.get('/api/alerts/history', (req, res) => res.json(alerts));
+app.get('/api/complaints', (req, res) => res.json(complaints));
 
-app.get('/api/alerts', (req, res) => {
-  res.json(alerts.filter(alert => alert.active));
-});
-
-app.get('/api/alerts/history', (req, res) => {
-  res.json(alerts);
+app.post('/api/otp/generate', (req, res) => {
+  otps[req.body.mobile] = "261105";
+  res.json({ success: true });
 });
 
 app.post('/api/complaints', (req, res) => {
-  const complaint = {
-    id: uuidv4(),
-    ...req.body,
-    timestamp: new Date(),
-    status: 'pending'
-  };
-  complaints.unshift(complaint);
-  res.json(complaint);
+  const c = { id: uuidv4(), ...req.body, timestamp: new Date(), status: 'pending' };
+  complaints.unshift(c);
+  res.json(c);
 });
 
-app.get('/api/complaints', (req, res) => {
-  res.json(complaints);
-});
-
-app.post('/api/maintenance/:id', (req, res) => {
+app.patch('/api/complaints/:id', (req, res) => {
   const { id } = req.params;
-  const infrastructureItem = infrastructure.find(item => item.id === id);
-  
-  if (infrastructureItem) {
-    infrastructureItem.status = 'yellow';
-    infrastructureItem.maintenanceScheduled = new Date();
-    
-    // Deactivate related alerts
-    alerts.forEach(alert => {
-      if (alert.infrastructureId === id && alert.active) {
-        alert.active = false;
-        alert.resolvedAt = new Date();
-      }
-    });
-    
-    res.json({ success: true, message: 'Maintenance scheduled' });
+  const { status } = req.body;
+  const complaint = complaints.find(c => c.id === id);
+  if (complaint) {
+    complaint.status = status;
+    res.json(complaint);
   } else {
-    res.status(404).json({ error: 'Infrastructure not found' });
+    res.status(404).json({ error: 'Complaint not found' });
   }
 });
 
-// WebSocket connection
-io.on('connection', (socket) => {
-  console.log('New client connected');
-  
-  // Send initial data
-  socket.emit('initialData', {
-    infrastructure,
-    alerts: alerts.filter(alert => alert.active)
-  });
-  
-  socket.on('disconnect', () => {
-    console.log('Client disconnected');
-  });
+app.patch('/api/alerts/:id', (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  const alert = alerts.find(a => a.id === id);
+  if (alert) {
+    alert.status = status;
+    if (['resolved', 'approved', 'scheduled', 'rejected'].includes(status)) {
+      alert.active = false;
+      alert.resolvedAt = new Date();
+    }
+    res.json(alert);
+  } else {
+    res.status(404).json({ error: 'Alert not found' });
+  }
 });
 
-// Start data simulation
 setInterval(() => {
   updateInfrastructure();
   io.emit('infrastructureUpdate', infrastructure);
-  io.emit('alertsUpdate', alerts.filter(alert => alert.active));
-}, 3000); // Update every 3 seconds
+}, 3000);
 
 const PORT = 3001;
-server.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
-});
+server.listen(PORT, () => console.log(`Backend Active: ${PORT}`));

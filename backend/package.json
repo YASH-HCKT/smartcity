@@ -1,7 +1,7 @@
 {
   "name": "smart-city-backend",
   "version": "1.0.0",
-  "description": "Backend for Smart City Infrastructure Monitor",
+  "description": "Backend for INFRA SENSE",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

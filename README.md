@@ -1,6 +1,6 @@
-# Smart City Infrastructure Monitor
+# INFRA SENSE
 
-A real-time smart city infrastructure monitoring platform for proactive maintenance and citizen engagement.
+A real-time infrastructure sensing and monitoring platform for proactive maintenance and citizen engagement.
 
 ## Features
 
